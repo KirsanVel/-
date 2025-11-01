@@ -1,0 +1,80 @@
+name: Deploy to VPS via SSH
+on:
+  push:
+    branches: [ main ]
+
+concurrency:
+  group: deploy-vps-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      PM2_PROCESS_NAME: ${{ secrets.PM2_PROCESS_NAME }}
+      SYSTEMD_SERVICE_NAME: ${{ secrets.SYSTEMD_SERVICE_NAME }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install deps and build (local)
+        run: |
+          npm ci
+          npm run build --if-present
+
+      - name: Start ssh-agent
+        uses: webfactory/ssh-agent@v0.5.4
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          if [ -n "${SSH_PORT}" ]; then
+            ssh-keyscan -p "${SSH_PORT}" "${SSH_HOST}" >> ~/.ssh/known_hosts
+          else
+            ssh-keyscan "${SSH_HOST}" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Rsync to server
+        env:
+          RSYNC_RSH: "ssh -p ${SSH_PORT:-22} -o StrictHostKeyChecking=no"
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='node_modules' \
+            --exclude='.github' \
+            --exclude='.gitlab-ci.yml' \
+            ./ "${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}"
+
+      - name: Remote deploy (install & restart)
+        run: |
+          ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" <<EOF
+          set -e
+          mkdir -p "${DEPLOY_PATH}"
+          cd "${DEPLOY_PATH}"
+          # Install production dependencies
+          npm ci --production --prefer-offline --no-audit
+          # If there is a local build required on server uncomment:
+          # npm run build --if-present
+          # Try to restart via pm2 if available, otherwise systemd
+          if command -v pm2 >/dev/null 2>&1; then
+            if [ -f ecosystem.config.js ]; then
+              pm2 startOrReload ecosystem.config.js --env production || true
+            fi
+            pm2 restart "${PM2_PROCESS_NAME:-app}" || pm2 start npm --name "${PM2_PROCESS_NAME:-app}" -- start || true
+          else
+            sudo systemctl restart "${SYSTEMD_SERVICE_NAME:-app.service}" || true
+          fi
+          EOF
+git clone git@github.com:OWNER/REPO.git
