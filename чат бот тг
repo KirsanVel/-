@@ -4,19 +4,16 @@ on:
     branches: [ main ]
 
 concurrency:
-  group: deploy-vps-${{ github.ref }}
+  group: deploy-vps-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-      SSH_PORT: ${{ secrets.SSH_PORT }}
-      SSH_HOST: ${{ secrets.SSH_HOST }}
-      SSH_USER: ${{ secrets.SSH_USER }}
-      PM2_PROCESS_NAME: ${{ secrets.PM2_PROCESS_NAME }}
-      SYSTEMD_SERVICE_NAME: ${{ secrets.SYSTEMD_SERVICE_NAME }}
+      SSH_PORT: ${{ 22 }}
+      SSH_HOST: ${{ 203.0.113.12 }}
+      SSH_USER: ${{ deploy }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -39,10 +36,11 @@ jobs:
       - name: Add server to known_hosts
         run: |
           mkdir -p ~/.ssh
-          if [ -n "${SSH_PORT}" ]; then
-            ssh-keyscan -p "${SSH_PORT}" "${SSH_HOST}" >> ~/.ssh/known_hosts
+          if [ -n "${{ 22 }}" ]; then
+            ssh-keyscan -H -p "${{ 22 }}" "${{ 203.0.113.12 }}" >> ~/.ssh/known_hosts
           else
-            ssh-keyscan "${SSH_HOST}" >> ~/.ssh/known_hosts
+            ssh-keyscan -H "${{ 203.0.113.12
+            }}" >> ~/.ssh/known_hosts
           fi
 
       - name: Rsync to server
@@ -55,26 +53,27 @@ jobs:
             --exclude='node_modules' \
             --exclude='.github' \
             --exclude='.gitlab-ci.yml' \
-            ./ "${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}"
+            ./ "${deploy}@${SSH_HOST}:${{ /var/www/myapp }}"
 
       - name: Remote deploy (install & restart)
-        run: |
-          ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" <<EOF
+ run: |
+          ssh -p "${SSH_PORT:-22}" -o StrictHostKeyChecking=no "${deploy}@${203.0.113.12}" bash -s -- "${{ /var/www/myapp }}" "${{ myapp }}" "${{ myapp.service }}" <<'REMOTE_EOF'
           set -e
-          mkdir -p "${DEPLOY_PATH}"
+          DEPLOY_PATH="$1"
+          PM2_NAME="${2:-app}"
+          SYSTEMD_NAME="${3:-app.service}"
+          mkdir -p "${/var/www/myapp}"
           cd "${DEPLOY_PATH}"
           # Install production dependencies
-          npm ci --production --prefer-offline --no-audit
-          # If there is a local build required on server uncomment:
+          npm ci --production --prefer-offline --no-audit || true
+          # If you need to build on server, uncomment:
           # npm run build --if-present
-          # Try to restart via pm2 if available, otherwise systemd
           if command -v pm2 >/dev/null 2>&1; then
             if [ -f ecosystem.config.js ]; then
               pm2 startOrReload ecosystem.config.js --env production || true
             fi
-            pm2 restart "${PM2_PROCESS_NAME:-app}" || pm2 start npm --name "${PM2_PROCESS_NAME:-app}" -- start || true
+            pm2 restart "${myapp}" || pm2 start npm --name "${myapp}" -- start || true
           else
-            sudo systemctl restart "${SYSTEMD_SERVICE_NAME:-app.service}" || true
+            sudo systemctl restart "${SYSTEMD_NAME}" || true
           fi
-          EOF
-git clone git@github.com:OWNER/REPO.git
+          REMOTE_EOF
