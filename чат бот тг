@@ -11,9 +11,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      SSH_PORT: ${{ 22 }}
-      SSH_HOST: ${{ 203.0.113.12 }}
-      SSH_USER: ${{ deploy }}
+      SSH_PORT: ${{ secrets.22 }}
+      SSH_HOST: ${{ secrets.203.0.113.12 }}
+      SSH_USER: ${{ secrets.deploy }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,7 +37,7 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           if [ -n "${{ 22 }}" ]; then
-            ssh-keyscan -H -p "${{ 22 }}" "${{ 203.0.113.12 }}" >> ~/.ssh/known_hosts
+            ssh-keyscan -H -p "${{ secrets.22 }}" "${{ secrets.203.0.113.12 }}" >> ~/.ssh/known_hosts
           else
             ssh-keyscan -H "${{ 203.0.113.12
             }}" >> ~/.ssh/known_hosts
@@ -53,16 +53,16 @@ jobs:
             --exclude='node_modules' \
             --exclude='.github' \
             --exclude='.gitlab-ci.yml' \
-            ./ "${deploy}@${SSH_HOST}:${{ /var/www/myapp }}"
+            ./ "${secrets.deploy}@${SSH_HOST}:${{ /var/www/myapp }}"
 
       - name: Remote deploy (install & restart)
  run: |
-          ssh -p "${SSH_PORT:-22}" -o StrictHostKeyChecking=no "${deploy}@${203.0.113.12}" bash -s -- "${{ /var/www/myapp }}" "${{ myapp }}" "${{ myapp.service }}" <<'REMOTE_EOF'
+          ssh -p "${SSH_PORT:-22}" -o StrictHostKeyChecking=no "${secrets.deploy}@${secrets.203.0.113.12}" bash -s -- "${{ secrets./var/www/myapp }}" "${{ myapp }}" "${{ secrets.myapp.service }}" <<'REMOTE_EOF'
           set -e
           DEPLOY_PATH="$1"
           PM2_NAME="${2:-app}"
           SYSTEMD_NAME="${3:-app.service}"
-          mkdir -p "${/var/www/myapp}"
+          mkdir -p "${secrets./var/www/myapp}"
           cd "${DEPLOY_PATH}"
           # Install production dependencies
           npm ci --production --prefer-offline --no-audit || true
@@ -72,7 +72,7 @@ jobs:
             if [ -f ecosystem.config.js ]; then
               pm2 startOrReload ecosystem.config.js --env production || true
             fi
-            pm2 restart "${myapp}" || pm2 start npm --name "${myapp}" -- start || true
+            pm2 restart "${secrets.myapp}" || pm2 start npm --name "${secrets.myapp}" -- start || true
           else
             sudo systemctl restart "${SYSTEMD_NAME}" || true
           fi
